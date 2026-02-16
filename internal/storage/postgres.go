@@ -35,6 +35,7 @@ func (r *PostgresRepo) GetByCity(ctx context.Context, city string) (*destination
 	return &d, nil
 }
 
+
 func (r *PostgresRepo) Upsert(ctx context.Context, d *destination.Destination) error {
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO destinations (city, country, latitude, longitude, metadata)

@@ -19,6 +19,7 @@ type Pipeline struct {
 	ch         chan feed.FeedResult
 	interval   time.Duration
 	debounce   time.Duration
+	pollDelay  time.Duration
 	geoCache   sync.Map // city -> *feed.GeocodingResult
 	geocodeURL string
 	weatherURL string
@@ -37,6 +38,7 @@ func NewPipeline(repo destination.Repository, client *http.Client, interval, deb
 		ch:         make(chan feed.FeedResult, 100),
 		interval:   interval,
 		debounce:   debounce,
+		pollDelay:  1 * time.Second,
 		geocodeURL: feed.GeocodeBaseURL,
 		weatherURL: feed.OpenMeteoBaseURL,
 		countryURL: feed.RestCountriesBaseURL,
@@ -44,17 +46,19 @@ func NewPipeline(repo destination.Repository, client *http.Client, interval, deb
 	}
 }
 
-// Start launches the listener and polls all cities on a ticker.
-// It blocks until ctx is cancelled.
-func (p *Pipeline) Start(ctx context.Context, cities []string) {
+// Start launches the listener, fetches the city list from the REST Countries API,
+// and polls all cities on a ticker. It blocks until ctx is cancelled.
+func (p *Pipeline) Start(ctx context.Context) {
 	listenerDone := make(chan struct{})
 	go func() {
 		p.listen(ctx)
 		close(listenerDone)
 	}()
 
-	// Initial poll
-	p.pollAll(ctx, cities)
+	cities := p.loadCities(ctx)
+	if len(cities) > 0 {
+		p.pollAll(ctx, cities)
+	}
 
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -62,7 +66,12 @@ func (p *Pipeline) Start(ctx context.Context, cities []string) {
 	for {
 		select {
 		case <-ticker.C:
-			p.pollAll(ctx, cities)
+			if len(cities) == 0 {
+				cities = p.loadCities(ctx)
+			}
+			if len(cities) > 0 {
+				p.pollAll(ctx, cities)
+			}
 		case <-ctx.Done():
 			<-listenerDone
 			return
@@ -70,17 +79,27 @@ func (p *Pipeline) Start(ctx context.Context, cities []string) {
 	}
 }
 
-// pollAll launches a goroutine per city, waits for all to finish.
-func (p *Pipeline) pollAll(ctx context.Context, cities []string) {
-	var wg sync.WaitGroup
-	for _, city := range cities {
-		wg.Add(1)
-		go func(c string) {
-			defer wg.Done()
-			p.pollCity(ctx, c)
-		}(city)
+// loadCities fetches capital cities from the REST Countries API.
+func (p *Pipeline) loadCities(ctx context.Context) []string {
+	cities, err := feed.FetchCities(ctx, p.client, p.countryURL)
+	if err != nil {
+		log.Printf("pipeline: fetch cities: %v", err)
+		return nil
 	}
-	wg.Wait()
+	return cities
+}
+
+// pollAll polls cities sequentially with a delay between each to respect API rate limits.
+func (p *Pipeline) pollAll(ctx context.Context, cities []string) {
+	for _, city := range cities {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		p.pollCity(ctx, city)
+		time.Sleep(p.pollDelay)
+	}
 }
 
 // pollCity fetches geocoding (cached), weather, country, and safety data for a city.

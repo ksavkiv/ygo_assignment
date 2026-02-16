@@ -72,10 +72,10 @@ func main() {
 		}
 	}()
 
-	// Start data feed pipeline in background
-	seedCities := []string{"paris", "london", "tokyo"}
+	// Start data feed pipeline in background.
+	// Pipeline auto-pulls cities from the DB on each tick.
 	pl := pipeline.NewPipeline(repo, nil, 5*time.Minute, 5*time.Second)
-	go pl.Start(ctx, seedCities)
+	go pl.Start(ctx)
 
 	<-ctx.Done()
 	log.Println("shutting down...")

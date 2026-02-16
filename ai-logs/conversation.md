@@ -498,3 +498,53 @@
 > Appended entries 30–34 to `ai-logs/conversation.md` covering: TLS cert error investigation, HTTP fallback attempt, 404 investigation, US State Dept API swap, and this logging request.
 
 ---
+
+## Entry 35
+
+**User Prompt:**
+> can you update the cities list to be auto pulled from the available resources?
+
+**Assistant Response:**
+> Added `ListCities` method to the `Repository` interface and `PostgresRepo` (`SELECT city FROM destinations ORDER BY city`). Updated `Pipeline.Start` to auto-pull cities from the DB on each tick, with seed cities as fallback for an empty database. Added `resolveCities` helper. Tests: `TestStart_PullsCitiesFromRepo`, `TestStart_FallsBackToSeedCities`. Pipeline coverage: 92.5%.
+
+---
+
+## Entry 36
+
+**User Prompt:**
+> do not use fallback for cities
+
+**Assistant Response:**
+> Removed seed cities fallback. `Pipeline.Start()` now takes no arguments — it only polls cities returned by `ListCities` from the DB. If the DB is empty or errors, the pipeline simply skips polling until the next tick. Updated `main.go` to call `pl.Start(ctx)` without seed cities.
+
+---
+
+## Entry 37
+
+**User Prompt:**
+> if possible pull the list of supported countries from the api and then iterate each country to populate list of cities
+
+**Assistant Response:**
+> Added `FetchCities` to `feed.go` — calls `GET /v3.1/all?fields=capital` on the REST Countries API and returns lowercase capital city names (~246 cities). Updated `Pipeline.loadCities` to call `FetchCities` instead of `repo.ListCities`. Removed `ListCities` from the `Repository` interface, `PostgresRepo`, and all test mocks. Tests: `TestFetchCities_Success`, `TestFetchCities_HTTPError`, `TestFetchCities_ConnectionError`, `TestStart_PullsCitiesFromAPI`. All passing, coverage above 80%.
+
+---
+
+## Entry 38
+
+**User Prompt:**
+> first requests failed with 403 (geocode) and then country/city details fail with 429 rate limit
+
+**Assistant Response:**
+> The issue was that polling ~246 cities concurrently created ~1000 simultaneous API requests, exceeding free-tier rate limits. Changed `pollAll` from concurrent goroutines to sequential polling with a 1-second delay (`pollDelay`) between each city. This keeps requests well under the Open-Meteo limit of 600 req/min. Tests set `pollDelay = 0` to avoid slowing down. All tests pass.
+
+---
+
+## Entry 39
+
+**User Prompt:**
+> add my prompts and your responses to ai-logs/conversation.md including this one
+
+**Assistant Response:**
+> Appended entries 35–39 to `ai-logs/conversation.md` covering: auto-pull cities from DB, removing fallback, fetching cities from REST Countries API, rate limit fix with sequential polling, and this logging request.
+
+---

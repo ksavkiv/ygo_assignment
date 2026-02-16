@@ -225,6 +225,10 @@ func newTestServers() *testServers {
 
 	countrySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v3.1/all" {
+			w.Write([]byte(`[{"capital":["Paris"]}]`))
+			return
+		}
 		w.Write([]byte(`[{
 			"name":{"official":"French Republic"},
 			"capital":["Paris"],
@@ -384,6 +388,7 @@ func TestPollAll(t *testing.T) {
 	}
 
 	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	p.pollDelay = 0
 	p.geocodeURL = servers.geocode.URL
 	p.weatherURL = servers.weather.URL
 	p.countryURL = servers.country.URL
@@ -420,6 +425,7 @@ func TestStart_CancelsCleanly(t *testing.T) {
 	}
 
 	p := NewPipeline(repo, nil, 1*time.Hour, 50*time.Millisecond)
+	p.pollDelay = 0
 	p.geocodeURL = servers.geocode.URL
 	p.weatherURL = servers.weather.URL
 	p.countryURL = servers.country.URL
@@ -428,7 +434,7 @@ func TestStart_CancelsCleanly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		p.Start(ctx, []string{"paris"})
+		p.Start(ctx)
 		close(done)
 	}()
 
@@ -441,6 +447,48 @@ func TestStart_CancelsCleanly(t *testing.T) {
 		// Start returned cleanly
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return after context cancellation")
+	}
+}
+
+func TestStart_PullsCitiesFromAPI(t *testing.T) {
+	servers := newTestServers()
+	defer servers.close()
+
+	var mu sync.Mutex
+	upserted := map[string]bool{}
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, d *destination.Destination) error {
+			mu.Lock()
+			defer mu.Unlock()
+			upserted[d.City] = true
+			return nil
+		},
+	}
+
+	p := NewPipeline(repo, nil, 1*time.Hour, 50*time.Millisecond)
+	p.pollDelay = 0
+	p.geocodeURL = servers.geocode.URL
+	p.weatherURL = servers.weather.URL
+	p.countryURL = servers.country.URL
+	p.safetyURL = servers.safety.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.Start(ctx)
+		close(done)
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !upserted["paris"] {
+		t.Error("expected pipeline to poll 'paris' from REST Countries API capitals")
 	}
 }
 

@@ -346,3 +346,38 @@ func stripHTML(s string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// FetchCities retrieves all capital cities from the REST Countries API.
+func FetchCities(ctx context.Context, client *http.Client, baseURL string) ([]string, error) {
+	url := fmt.Sprintf("%s/v3.1/all?fields=capital", baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cities request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cities call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cities: unexpected status %d", resp.StatusCode)
+	}
+
+	var items []struct {
+		Capital []string `json:"capital"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, fmt.Errorf("cities decode: %w", err)
+	}
+
+	cities := make([]string, 0, len(items))
+	for _, item := range items {
+		if len(item.Capital) > 0 && item.Capital[0] != "" {
+			cities = append(cities, strings.ToLower(item.Capital[0]))
+		}
+	}
+	return cities, nil
+}

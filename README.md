@@ -51,11 +51,11 @@ curl -s http://localhost:8080/api/v1/health \
   -H "Authorization: Bearer $TOKEN" | jq
 
 # Get destination data for a city
-curl -s http://localhost:8080/api/v1/destinations/paris \
+curl -s http://localhost:8080/api/v1/destinations/brussels \
   -H "Authorization: Bearer $TOKEN" | jq
 
 # Refresh destination data from external sources
-curl -s -X POST http://localhost:8080/api/v1/destinations/tokyo/refresh \
+curl -s -X POST http://localhost:8080/api/v1/destinations/brussels/refresh \
   -H "Authorization: Bearer $TOKEN" | jq
 
 # Request without token (returns 401)

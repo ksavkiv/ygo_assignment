@@ -511,3 +511,58 @@ func TestFetchSafety_ConnectionError(t *testing.T) {
 		t.Fatal("expected error for connection failure, got nil")
 	}
 }
+
+// ---------- FetchCities ----------
+
+func TestFetchCities_Success(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3.1/all" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("fields"); got != "capital" {
+			t.Fatalf("expected fields=capital, got %s", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"capital":["Paris"]},
+			{"capital":["Tokyo"]},
+			{"capital":["London"]},
+			{"capital":[]}
+		]`))
+	}))
+	defer ts.Close()
+
+	cities, err := FetchCities(context.Background(), ts.Client(), ts.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cities) != 3 {
+		t.Fatalf("expected 3 cities, got %d: %v", len(cities), cities)
+	}
+
+	want := map[string]bool{"paris": true, "tokyo": true, "london": true}
+	for _, c := range cities {
+		if !want[c] {
+			t.Errorf("unexpected city %q", c)
+		}
+	}
+}
+
+func TestFetchCities_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer ts.Close()
+
+	_, err := FetchCities(context.Background(), ts.Client(), ts.URL)
+	if err == nil {
+		t.Fatal("expected error for 503 response, got nil")
+	}
+}
+
+func TestFetchCities_ConnectionError(t *testing.T) {
+	_, err := FetchCities(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1")
+	if err == nil {
+		t.Fatal("expected error for connection failure, got nil")
+	}
+}
