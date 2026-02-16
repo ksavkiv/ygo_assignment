@@ -21,8 +21,13 @@ func NewPostgresRepo(pool *pgxpool.Pool) *PostgresRepo {
 func (r *PostgresRepo) GetByCity(ctx context.Context, city string) (*destination.Destination, error) {
 	var d destination.Destination
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, city, country, latitude, longitude, metadata, created_at, updated_at FROM destinations WHERE city = $1`, city).
-		Scan(&d.ID, &d.City, &d.Country, &d.Latitude, &d.Longitude, &d.Metadata, &d.CreatedAt, &d.UpdatedAt)
+		`SELECT id, city, country, latitude, longitude, metadata, created_at, updated_at,
+		        metadata->'weather'->>'current_temp_c' AS current_temp,
+		        metadata->'country'->>'region' AS region,
+		        metadata->'safety'->>'score' AS safety_score
+		 FROM destinations WHERE city = $1`, city).
+		Scan(&d.ID, &d.City, &d.Country, &d.Latitude, &d.Longitude, &d.Metadata, &d.CreatedAt, &d.UpdatedAt,
+			&d.CurrentTemp, &d.Region, &d.SafetyScore)
 	if err != nil {
 		slog.Error("postgres: failed to get destination", "city", city, "error", err)
 		return nil, fmt.Errorf("get destination %s: %w", city, err)

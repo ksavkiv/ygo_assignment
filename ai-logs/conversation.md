@@ -298,3 +298,144 @@
 > **Result** — 14/14 tests pass. Smoke tested end-to-end: `POST /refresh` stores `{"source":"stub"}` as JSONB, `GET` returns it from cache with full round-trip.
 
 ---
+
+## Entry 24
+
+**User Prompt:**
+> commit and push
+
+**Assistant Response:**
+> Staged 17 files, committed as `aeabe12` ("Add city-based API endpoints, JSONB metadata, unit tests, and CLAUDE.md"), pushed to `origin/main`.
+
+---
+
+## Entry 25
+
+**User Prompt:**
+> Create FeedResult type and API response structs in `internal/destination/feed.go` with types: FeedResult, GeocodingResult, geocodingResponse, WeatherData, openMeteoResponse, CountryData, SafetyData, advisoryAPIResponse.
+
+**Assistant Response:**
+> Created `internal/destination/feed.go` with all 8 types (5 exported, 3 unexported). Verified the package compiles and all existing tests pass. Committed as `06c976e` ("feat: add FeedResult and API response types for data feed pipeline").
+
+---
+
+## Entry 26
+
+**User Prompt:**
+> Implement Tasks 2-3: Write API fetcher tests (`feed_test.go`) and implement fetcher functions (`fetchGeocode`, `fetchWeather`, `fetchCountry`, `fetchSafety`) in `feed.go`. Follow TDD red-green-refactor. Tests use `httptest.Server` to mock external APIs.
+
+**Assistant Response:**
+> Followed TDD red-green-refactor cycle:
+>
+> **RED** — Created `internal/destination/feed_test.go` with 8 tests using `httptest.Server` mocks:
+> - `TestFetchGeocode_Success` — verifies coordinates and country code
+> - `TestFetchGeocode_NoResults` — verifies error on empty results
+> - `TestFetchWeather_Success` — verifies FeedResult with Source="weather", correct WeatherData
+> - `TestFetchWeather_HTTPError` — verifies Err set on 500
+> - `TestFetchCountry_Success` — verifies FeedResult with Source="country", correct CountryData
+> - `TestFetchCountry_HTTPError` — verifies Err set on 404
+> - `TestFetchSafety_Success` — verifies FeedResult with Source="safety", correct SafetyData
+> - `TestFetchSafety_HTTPError` — verifies Err set on 503
+>
+> Confirmed all 8 tests fail (functions undefined).
+>
+> **GREEN** — Added 4 fetcher functions to `feed.go` plus `restCountryItem` helper type:
+> - `fetchGeocode` — calls Open-Meteo geocoding, returns first result or error
+> - `fetchWeather` — calls Open-Meteo forecast, parses into WeatherData, returns FeedResult
+> - `fetchCountry` — calls REST Countries alpha endpoint, parses array response into CountryData
+> - `fetchSafety` — calls travel-advisory.info, looks up country code key, extracts SafetyData
+>
+> All 16 tests pass (8 new + 8 existing). Full project test suite green.
+
+---
+
+## Entry 27
+
+**User Prompt:**
+> Implement Tasks 4-5: Write pipeline tests (TestPipelineListener_BatchesAndFlushes, TestPipelineListener_MultipleCities, TestPipelineListener_SkipsErrors) and create Pipeline struct with listener, debounced batching, and flush in `internal/destination/pipeline.go`. Follow TDD.
+
+**Assistant Response:**
+> Followed TDD red-green-refactor cycle:
+>
+> **RED** — Added 3 pipeline tests to `internal/destination/feed_test.go`:
+> - `TestPipelineListener_BatchesAndFlushes` — sends 3 FeedResults (weather, country, safety) for "paris", waits for 100ms debounce, verifies single upsert with merged metadata containing all 3 keys
+> - `TestPipelineListener_MultipleCities` — sends weather results for "paris" and "london", verifies 2 separate upserts
+> - `TestPipelineListener_SkipsErrors` — sends a good weather result and an errored safety result, verifies upsert only contains weather key
+> Confirmed all 3 tests fail (NewPipeline undefined).
+>
+> **GREEN** — Created `internal/destination/pipeline.go` with:
+> - `Pipeline` struct — repo, client, ch (buffered chan FeedResult), interval, debounce, geoCache (sync.Map)
+> - `NewPipeline` — constructor with default 10s-timeout client, 100-buffered channel
+> - `Start` — launches listener goroutine, initial pollAll, ticker loop, blocks until ctx cancelled
+> - `pollAll` — goroutine per city with WaitGroup
+> - `pollCity` — geocode (cached via sync.Map), weather, country+safety in parallel, all send to ch
+> - `listen` — select loop with debounced timer: receives FeedResults, skips errors, batches by city, flushes on timer, drains on ctx.Done
+> - `flush` — merges FeedResults by Source into metadata JSON, enriches with geo data, calls repo.Upsert
+>
+> All 19 tests pass (8 feed + 3 pipeline + 8 service). Committed as `2456d3a`.
+
+---
+
+## Entry 28
+
+**User Prompt:**
+> Implement Tasks 6-8: Add APIFetcher test (TestAPIFetcher_Fetch in feed_test.go), add APIFetcher struct to fetcher.go (keep StubFetcher), and wire into main.go (replace StubFetcher with NewDefaultAPIFetcher, add Pipeline startup with seed cities).
+
+**Assistant Response:**
+> Followed TDD red-green-refactor cycle:
+>
+> **RED** — Added `TestAPIFetcher_Fetch` to `internal/destination/feed_test.go`:
+> - Spins up 4 httptest.Server mocks (geocoding, weather, country, safety)
+> - Creates APIFetcher with mock URLs, calls Fetch("paris")
+> - Asserts City="paris", Country="France", Latitude=48.85
+> - Verifies metadata JSON contains "weather", "country", and "safety" keys
+> Confirmed test fails (NewAPIFetcher undefined).
+>
+> **GREEN** — Added `APIFetcher` to `internal/destination/fetcher.go`:
+> - `APIFetcher` struct with http.Client and 4 URL fields
+> - `NewAPIFetcher(geocodeURL, weatherURL, countryURL, safetyURL)` constructor
+> - `NewDefaultAPIFetcher()` using production base URL constants
+> - `Fetch(ctx, city)` — geocodes city, then fetches weather/country/safety concurrently via goroutines+WaitGroup, merges results into metadata JSON, returns Destination
+>
+> **Wiring** — Updated `cmd/server/main.go`:
+> - Replaced `destination.NewStubFetcher()` with `destination.NewDefaultAPIFetcher()`
+> - Added pipeline startup after server: seed cities ["paris", "london", "tokyo"], 5-min interval, 5-sec debounce
+>
+> All tests pass (20 destination + 12 api + 4 config = 36 total). Committed as `b6ae833`.
+
+---
+
+## Entry 29
+
+**User Prompt:**
+> Increase test coverage for `internal/destination` from 64% to at least 80%. Make Pipeline base URLs configurable on struct, add tests for StubFetcher, pollCity, pollAll, Start, and error branches for all fetch functions.
+
+**Assistant Response:**
+> Made two sets of changes to reach **90.8% coverage** (up from 64%):
+>
+> **pipeline.go** — Added 4 URL fields (`geocodeURL`, `weatherURL`, `countryURL`, `safetyURL`) to `Pipeline` struct, initialized from constants in `NewPipeline`, used in `pollCity` instead of package-level constants. This makes `pollCity`/`pollAll`/`Start` testable with httptest servers.
+>
+> **feed_test.go** — Added 19 new tests:
+> - `TestStubFetcher` — verifies lowercase city, "unknown" country, `{"source":"stub"}` metadata
+> - `TestNewDefaultAPIFetcher` — verifies default URLs match constants
+> - `TestPollCity` — sets up 4 httptest servers, calls pollCity, drains 3 results from channel
+> - `TestPollCity_GeocodeError` — geocode returns 500, verifies no results on channel
+> - `TestPollCity_UsesGeoCache` — pre-populates geoCache, verifies 3 results without geocode server
+> - `TestPollAll` — 2 cities, verifies 6 results on channel
+> - `TestStart_CancelsCleanly` — verifies Start returns after ctx cancellation
+> - `TestFetchGeocode_HTTPError` — 500 response
+> - `TestFetchGeocode_BadJSON` — invalid JSON decode error
+> - `TestFetchWeather_BadJSON` — invalid JSON decode error
+> - `TestFetchCountry_EmptyArray` — `[]` response triggers "no results" error
+> - `TestFetchCountry_BadJSON` — invalid JSON decode error
+> - `TestFetchSafety_MissingCountryCode` — valid JSON but wrong country code
+> - `TestFetchSafety_BadJSON` — invalid JSON decode error
+> - `TestFetchGeocode_ConnectionError` — unreachable host
+> - `TestFetchWeather_ConnectionError` — unreachable host
+> - `TestFetchCountry_ConnectionError` — unreachable host
+> - `TestFetchSafety_ConnectionError` — unreachable host
+> - `TestFlush_UpsertError` — verifies flush handles upsert errors gracefully
+>
+> All 37 tests pass. Coverage: 90.8%. Committed as `838cf59`.
+
+---

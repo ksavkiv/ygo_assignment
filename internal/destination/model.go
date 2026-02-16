@@ -14,4 +14,9 @@ type Destination struct {
 	Metadata  json.RawMessage `json:"metadata"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+
+	// Fields extracted from metadata JSONB via -> and ->> operators.
+	CurrentTemp *string `json:"current_temp,omitempty"`
+	Region      *string `json:"region,omitempty"`
+	SafetyScore *string `json:"safety_score,omitempty"`
 }
