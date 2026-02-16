@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -19,49 +20,68 @@ type Handler struct {
 }
 
 func (h *Handler) GetByCity(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("endpoint called", "method", r.Method, "path", r.URL.Path)
+
 	city := strings.ToLower(chi.URLParam(r, "city"))
 	if city == "" {
+		slog.Debug("response", "method", r.Method, "path", r.URL.Path, "status", http.StatusBadRequest)
 		http.Error(w, "city is required", http.StatusBadRequest)
 		return
 	}
 
 	d, err := h.svc.GetByCity(r.Context(), city)
 	if err != nil {
+		slog.Debug("response", "method", r.Method, "path", r.URL.Path, "city", city, "status", http.StatusNotFound)
 		http.Error(w, "destination not found", http.StatusNotFound)
 		return
 	}
+	slog.Debug("response", "method", r.Method, "path", r.URL.Path, "city", city, "status", http.StatusOK)
 	writeJSON(w, http.StatusOK, d)
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("endpoint called", "method", r.Method, "path", r.URL.Path)
+
 	city := strings.ToLower(chi.URLParam(r, "city"))
 	if city == "" {
+		slog.Debug("response", "method", r.Method, "path", r.URL.Path, "status", http.StatusBadRequest)
 		http.Error(w, "city is required", http.StatusBadRequest)
 		return
 	}
 
 	d, err := h.svc.Refresh(r.Context(), city)
 	if err != nil {
+		slog.Debug("response", "method", r.Method, "path", r.URL.Path, "city", city, "status", http.StatusInternalServerError)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Debug("response", "method", r.Method, "path", r.URL.Path, "city", city, "status", http.StatusOK)
 	writeJSON(w, http.StatusOK, d)
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("endpoint called", "method", r.Method, "path", r.URL.Path)
 	ctx := r.Context()
 
-	dbOK := h.pool.Ping(ctx) == nil
-	redisOK := h.rdb.Ping(ctx).Err() == nil
+	dbErr := h.pool.Ping(ctx)
+	redisErr := h.rdb.Ping(ctx).Err()
+
+	if dbErr != nil {
+		slog.Error("health: postgres ping failed", "error", dbErr)
+	}
+	if redisErr != nil {
+		slog.Error("health: redis ping failed", "error", redisErr)
+	}
 
 	status := http.StatusOK
-	if !dbOK || !redisOK {
+	if dbErr != nil || redisErr != nil {
 		status = http.StatusServiceUnavailable
 	}
 
+	slog.Debug("response", "method", r.Method, "path", r.URL.Path, "status", status)
 	writeJSON(w, status, map[string]bool{
-		"postgres": dbOK,
-		"redis":    redisOK,
+		"postgres": dbErr == nil,
+		"redis":    redisErr == nil,
 	})
 }
 

@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL string
 	RedisAddr   string
 	APIToken    string
+	LogLevel    string
 }
 
 func Load() Config {
@@ -21,6 +22,7 @@ func Load() Config {
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/destinations?sslmode=disable"),
 		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
 		APIToken:    getEnv("API_TOKEN", ""),
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
 	}
 }
 

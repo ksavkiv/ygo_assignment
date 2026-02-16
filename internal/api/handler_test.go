@@ -64,6 +64,21 @@ func withChiURLParam(r *http.Request, key, val string) *http.Request {
 
 // --- GetByCity tests ---
 
+func TestGetByCity_EmptyCity(t *testing.T) {
+	h := newTestHandler(&stubRepo{data: map[string]*destination.Destination{}}, &stubCache{}, &stubFetcher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/destinations/", nil)
+	req = withChiURLParam(req, "city", "")
+	w := httptest.NewRecorder()
+
+	h.GetByCity(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+
 func TestGetByCity_Found(t *testing.T) {
 	repo := &stubRepo{data: map[string]*destination.Destination{
 		"paris": {City: "paris", Country: "france"},
@@ -100,6 +115,21 @@ func TestGetByCity_NotFound(t *testing.T) {
 }
 
 // --- Refresh tests ---
+
+func TestRefresh_EmptyCity(t *testing.T) {
+	h := newTestHandler(&stubRepo{data: map[string]*destination.Destination{}}, &stubCache{}, &stubFetcher{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/destinations//refresh", nil)
+	req = withChiURLParam(req, "city", "")
+	w := httptest.NewRecorder()
+
+	h.Refresh(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
 
 func TestRefresh_Success(t *testing.T) {
 	repo := &stubRepo{data: map[string]*destination.Destination{}}

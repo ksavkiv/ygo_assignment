@@ -10,6 +10,7 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("DATABASE_URL")
 	os.Unsetenv("REDIS_ADDR")
 	os.Unsetenv("API_TOKEN")
+	os.Unsetenv("LOG_LEVEL")
 
 	cfg := Load()
 
@@ -21,6 +22,9 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.APIToken != "" {
 		t.Errorf("got APIToken %q, want empty string", cfg.APIToken)
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("got LogLevel %q, want %q", cfg.LogLevel, "info")
 	}
 }
 
@@ -37,6 +41,17 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if cfg.RedisAddr != "redis:6380" {
 		t.Errorf("got RedisAddr %q, want redis:6380", cfg.RedisAddr)
+	}
+}
+
+func TestLoad_LogLevelFromEnv(t *testing.T) {
+	os.Setenv("LOG_LEVEL", "debug")
+	defer os.Unsetenv("LOG_LEVEL")
+
+	cfg := Load()
+
+	if cfg.LogLevel != "debug" {
+		t.Errorf("got LogLevel %q, want %q", cfg.LogLevel, "debug")
 	}
 }
 
