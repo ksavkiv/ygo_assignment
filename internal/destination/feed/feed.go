@@ -13,7 +13,7 @@ const (
 	GeocodeBaseURL       = "https://geocoding-api.open-meteo.com"
 	OpenMeteoBaseURL     = "https://api.open-meteo.com"
 	RestCountriesBaseURL = "https://restcountries.com"
-	AdvisoryBaseURL      = "https://www.travel-advisory.info/api"
+	AdvisoryBaseURL      = "https://cadataapi.state.gov/api/TravelAdvisories"
 )
 
 // FeedResult is the common intermediate type produced by all API fetchers.
@@ -73,7 +73,7 @@ type CountryData struct {
 	FlagURL string `json:"flag_url"`
 }
 
-// SafetyData holds fields extracted from travel-advisory.info.
+// SafetyData holds fields extracted from the US State Department Travel Advisories API.
 type SafetyData struct {
 	Score   float64 `json:"score"`
 	Sources int     `json:"sources_active"`
@@ -81,17 +81,10 @@ type SafetyData struct {
 	Updated string  `json:"updated"`
 }
 
-type advisoryAPIResponse struct {
-	Data map[string]struct {
-		ISOAlpha2 string `json:"iso_alpha2"`
-		Name      string `json:"name"`
-		Advisory  struct {
-			Score   float64 `json:"score"`
-			Sources int     `json:"sources_active"`
-			Message string  `json:"message"`
-			Updated string  `json:"updated"`
-		} `json:"advisory"`
-	} `json:"data"`
+type stateDeptAdvisory struct {
+	Title   string `json:"Title"`
+	Summary string `json:"Summary"`
+	Updated string `json:"Updated"`
 }
 
 // restCountryItem mirrors the relevant fields of a single REST Countries array element.
@@ -256,13 +249,11 @@ func FetchCountry(ctx context.Context, client *http.Client, baseURL, countryCode
 	return fr
 }
 
-// FetchSafety retrieves travel advisory data from travel-advisory.info.
-func FetchSafety(ctx context.Context, client *http.Client, baseURL, city, countryCode string) FeedResult {
+// FetchSafety retrieves travel advisory data from the US State Department API.
+func FetchSafety(ctx context.Context, client *http.Client, baseURL, city, countryName string) FeedResult {
 	fr := FeedResult{Source: "safety", City: city}
 
-	url := fmt.Sprintf("%s?countrycode=%s", baseURL, strings.ToUpper(countryCode))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL, nil)
 	if err != nil {
 		fr.Err = fmt.Errorf("safety request: %w", err)
 		return fr
@@ -280,24 +271,31 @@ func FetchSafety(ctx context.Context, client *http.Client, baseURL, city, countr
 		return fr
 	}
 
-	var ar advisoryAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+	var advisories []stateDeptAdvisory
+	if err := json.NewDecoder(resp.Body).Decode(&advisories); err != nil {
 		fr.Err = fmt.Errorf("safety decode: %w", err)
 		return fr
 	}
 
-	code := strings.ToUpper(countryCode)
-	entry, ok := ar.Data[code]
-	if !ok {
-		fr.Err = fmt.Errorf("safety: no advisory data for %q", code)
+	// Match by country name prefix in title (e.g. "France - Level 2: ...")
+	prefix := countryName + " - "
+	var match *stateDeptAdvisory
+	for i := range advisories {
+		if strings.HasPrefix(advisories[i].Title, prefix) {
+			match = &advisories[i]
+			break
+		}
+	}
+	if match == nil {
+		fr.Err = fmt.Errorf("safety: no advisory data for %q", countryName)
 		return fr
 	}
 
 	sd := SafetyData{
-		Score:   entry.Advisory.Score,
-		Sources: entry.Advisory.Sources,
-		Message: entry.Advisory.Message,
-		Updated: entry.Advisory.Updated,
+		Score:   parseLevelScore(match.Title),
+		Sources: 1,
+		Message: stripHTML(match.Summary),
+		Updated: match.Updated,
 	}
 
 	data, err := json.Marshal(sd)
@@ -309,4 +307,42 @@ func FetchSafety(ctx context.Context, client *http.Client, baseURL, city, countr
 	fr.Data = data
 	fr.FetchedAt = time.Now()
 	return fr
+}
+
+// parseLevelScore extracts the advisory level from a title like
+// "France - Level 2: Exercise Increased Caution" and maps it to a score.
+func parseLevelScore(title string) float64 {
+	// Level 1 → 1.0, Level 2 → 2.5, Level 3 → 3.5, Level 4 → 4.5
+	scores := map[string]float64{
+		"Level 1": 1.0,
+		"Level 2": 2.5,
+		"Level 3": 3.5,
+		"Level 4": 4.5,
+	}
+	for k, v := range scores {
+		if strings.Contains(title, k) {
+			return v
+		}
+	}
+	return 0
+}
+
+// stripHTML removes HTML tags from a string.
+func stripHTML(s string) string {
+	var b strings.Builder
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }

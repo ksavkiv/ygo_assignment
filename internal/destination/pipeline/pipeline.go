@@ -114,7 +114,7 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	}()
 	go func() {
 		defer wg.Done()
-		sr := feed.FetchSafety(ctx, p.client, p.safetyURL, city, geo.CountryCode)
+		sr := feed.FetchSafety(ctx, p.client, p.safetyURL, city, geo.Country)
 		p.ch <- sr
 	}()
 	wg.Wait()

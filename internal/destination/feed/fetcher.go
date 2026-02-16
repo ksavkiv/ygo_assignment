@@ -65,7 +65,7 @@ func (f *APIFetcher) Fetch(ctx context.Context, city string) (*destination.Desti
 	wg.Add(3)
 	go func() { defer wg.Done(); ch <- FetchWeather(ctx, f.client, f.weatherURL, city, geo.Latitude, geo.Longitude) }()
 	go func() { defer wg.Done(); r := FetchCountry(ctx, f.client, f.countryURL, geo.CountryCode); r.City = city; ch <- r }()
-	go func() { defer wg.Done(); ch <- FetchSafety(ctx, f.client, f.safetyURL, city, geo.CountryCode) }()
+	go func() { defer wg.Done(); ch <- FetchSafety(ctx, f.client, f.safetyURL, city, geo.Country) }()
 
 	wg.Wait()
 	close(ch)

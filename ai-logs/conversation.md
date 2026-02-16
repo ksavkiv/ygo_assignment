@@ -439,3 +439,62 @@
 > All 37 tests pass. Coverage: 90.8%. Committed as `838cf59`.
 
 ---
+
+## Entry 30
+
+**User Prompt:**
+> when I run server I get this error log {"time":"2026-02-16T17:40:19.344856+02:00","level":"INFO","msg":"pipeline: skipping errored safety result for tokyo: safety call: Get \"https://www.travel-advisory.info/api?countrycode=JP\": tls: failed to verify certificate: x509: certificate is valid for *.kasserver.com, kasserver.com, not www.travel-advisory.info
+
+**Assistant Response:**
+> Investigated the TLS error. The external `travel-advisory.info` API has a misconfigured SSL certificate — it's presenting a cert for `*.kasserver.com` instead of their own domain. This is an upstream issue, not a code bug. Offered three options: wait for fix, use HTTP, or skip TLS verification with a config flag.
+
+---
+
+## Entry 31
+
+**User Prompt:**
+> use http
+
+**Assistant Response:**
+> Changed `AdvisoryBaseURL` in `internal/destination/feed/feed.go:16` from `https://` to `http://`.
+
+---
+
+## Entry 32
+
+**User Prompt:**
+> I got these error logs, investigate and fix: safety: unexpected status 404 for tokyo, london, paris
+
+**Assistant Response:**
+> Investigated the 404 errors. Tested all URL variants with curl:
+> - `http://www.travel-advisory.info/api` → 404
+> - `http://travel-advisory.info/api` → 404
+> - `https://` with `-k` (skip TLS) → 301 redirect back to HTTP → 404
+>
+> The API is completely down — their infrastructure is broken in multiple ways (bad cert, HTTPS redirects to HTTP, HTTP returns 404). Reverted the URL back to `https://` since the pipeline already gracefully skips errored safety results. No fix possible on our end.
+
+---
+
+## Entry 33
+
+**User Prompt:**
+> pick other alternative instead resource of this with bad cert — pick the resource from docs/api-resources.md
+
+**Assistant Response:**
+> Selected the **US State Department Travel Advisories API** from `docs/api-resources.md` section 3.2 — free, no auth required, reliable government source. Tested with curl and confirmed it works. Followed TDD to swap the implementation:
+>
+> - **`feed.go`** — Changed `AdvisoryBaseURL` to `https://cadataapi.state.gov/api/TravelAdvisories`, replaced response struct (`advisoryAPIResponse` → `stateDeptAdvisory`), rewrote `FetchSafety` to fetch all advisories and match by country name in title prefix. Added `parseLevelScore` (maps Level 1-4 → scores 1.0/2.5/3.5/4.5) and `stripHTML` helper.
+> - **`fetcher.go`** / **`pipeline.go`** — Changed `FetchSafety` calls to pass `geo.Country` instead of `geo.CountryCode` (State Dept matches by country name, not ISO code).
+> - **Tests** — Updated all 6 safety-related tests and the `APIFetcher` integration test to use State Dept JSON format. All tests pass. Coverage: 86.7%.
+
+---
+
+## Entry 34
+
+**User Prompt:**
+> append my last prompts with your response and this one to ai-logs/conversation.md
+
+**Assistant Response:**
+> Appended entries 30–34 to `ai-logs/conversation.md` covering: TLS cert error investigation, HTTP fallback attempt, 404 investigation, US State Dept API swap, and this logging request.
+
+---

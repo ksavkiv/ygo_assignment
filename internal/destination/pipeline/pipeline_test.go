@@ -238,15 +238,7 @@ func newTestServers() *testServers {
 
 	safetySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"data":{
-				"FR":{
-					"iso_alpha2":"FR",
-					"name":"France",
-					"advisory":{"score":2.8,"sources_active":7,"message":"Safe","updated":"2024-06-15"}
-				}
-			}
-		}`))
+		w.Write([]byte(`[{"Title":"France - Level 1: Exercise Normal Precautions","Summary":"Safe","Updated":"2024-06-15"}]`))
 	}))
 
 	return &testServers{

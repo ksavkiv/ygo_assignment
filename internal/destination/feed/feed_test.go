@@ -210,29 +210,15 @@ func TestFetchCountry_HTTPError(t *testing.T) {
 
 func TestFetchSafety_Success(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("countrycode"); got != "FR" {
-			t.Fatalf("expected countrycode=FR, got %s", got)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"api_status":{"reply":{"code":200}},
-			"data":{
-				"FR":{
-					"iso_alpha2":"FR",
-					"name":"France",
-					"advisory":{
-						"score":2.8,
-						"sources_active":7,
-						"message":"Exercise normal safety precautions",
-						"updated":"2024-06-15 10:30:00"
-					}
-				}
-			}
-		}`))
+		w.Write([]byte(`[
+			{"Title":"France - Level 2: Exercise Increased Caution","Summary":"Exercise increased caution in France due to terrorism.","Updated":"2025-05-27T20:00:00-04:00"},
+			{"Title":"Japan - Level 1: Exercise Normal Precautions","Summary":"Exercise normal precaution in Japan.","Updated":"2025-05-14T20:00:00-04:00"}
+		]`))
 	}))
 	defer ts.Close()
 
-	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "France")
 	if fr.Err != nil {
 		t.Fatalf("unexpected error: %v", fr.Err)
 	}
@@ -250,17 +236,17 @@ func TestFetchSafety_Success(t *testing.T) {
 	if err := json.Unmarshal(fr.Data, &sd); err != nil {
 		t.Fatalf("failed to unmarshal SafetyData: %v", err)
 	}
-	if sd.Score != 2.8 {
-		t.Errorf("got score %f, want 2.8", sd.Score)
+	if sd.Score != 2.5 {
+		t.Errorf("got score %f, want 2.5", sd.Score)
 	}
-	if sd.Sources != 7 {
-		t.Errorf("got sources %d, want 7", sd.Sources)
+	if sd.Sources != 1 {
+		t.Errorf("got sources %d, want 1", sd.Sources)
 	}
-	if sd.Message != "Exercise normal safety precautions" {
-		t.Errorf("got message %q, want %q", sd.Message, "Exercise normal safety precautions")
+	if sd.Message != "Exercise increased caution in France due to terrorism." {
+		t.Errorf("got message %q", sd.Message)
 	}
-	if sd.Updated != "2024-06-15 10:30:00" {
-		t.Errorf("got updated %q, want %q", sd.Updated, "2024-06-15 10:30:00")
+	if sd.Updated != "2025-05-27T20:00:00-04:00" {
+		t.Errorf("got updated %q, want %q", sd.Updated, "2025-05-27T20:00:00-04:00")
 	}
 }
 
@@ -270,7 +256,7 @@ func TestFetchSafety_HTTPError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "France")
 	if fr.Err == nil {
 		t.Fatal("expected error for 503 response, got nil")
 	}
@@ -312,7 +298,7 @@ func TestAPIFetcher_Fetch(t *testing.T) {
 	defer countrySrv.Close()
 
 	safetySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":{"FR":{"iso_alpha2":"FR","name":"France","advisory":{"score":2.1,"sources_active":7,"message":"","updated":"2026-02-15"}}}}`))
+		w.Write([]byte(`[{"Title":"France - Level 2: Exercise Increased Caution","Summary":"Exercise increased caution in France.","Updated":"2026-02-15"}]`))
 	}))
 	defer safetySrv.Close()
 
@@ -465,17 +451,16 @@ func TestFetchCountry_BadJSON(t *testing.T) {
 	}
 }
 
-func TestFetchSafety_MissingCountryCode(t *testing.T) {
+func TestFetchSafety_CountryNotFound(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Valid JSON but without the requested country code "FR"
-		w.Write([]byte(`{"data":{"DE":{"iso_alpha2":"DE","name":"Germany","advisory":{"score":1.5,"sources_active":5,"message":"Safe","updated":"2024-01-01"}}}}`))
+		w.Write([]byte(`[{"Title":"Germany - Level 1: Exercise Normal Precautions","Summary":"Safe","Updated":"2024-01-01"}]`))
 	}))
 	defer ts.Close()
 
-	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "France")
 	if fr.Err == nil {
-		t.Fatal("expected error for missing country code, got nil")
+		t.Fatal("expected error for missing country, got nil")
 	}
 	if fr.Source != "safety" {
 		t.Errorf("got source %q, want %q", fr.Source, "safety")
@@ -489,7 +474,7 @@ func TestFetchSafety_BadJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	fr := FetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "France")
 	if fr.Err == nil {
 		t.Fatal("expected error for bad JSON, got nil")
 	}
@@ -521,7 +506,7 @@ func TestFetchCountry_ConnectionError(t *testing.T) {
 }
 
 func TestFetchSafety_ConnectionError(t *testing.T) {
-	fr := FetchSafety(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "paris", "FR")
+	fr := FetchSafety(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "paris", "France")
 	if fr.Err == nil {
 		t.Fatal("expected error for connection failure, got nil")
 	}
