@@ -18,12 +18,16 @@ const (
 
 // Pipeline orchestrates periodic polling of external APIs and batched upserts.
 type Pipeline struct {
-	repo     Repository
-	client   *http.Client
-	ch       chan FeedResult
-	interval time.Duration
-	debounce time.Duration
-	geoCache sync.Map // city -> *GeocodingResult
+	repo       Repository
+	client     *http.Client
+	ch         chan FeedResult
+	interval   time.Duration
+	debounce   time.Duration
+	geoCache   sync.Map // city -> *GeocodingResult
+	geocodeURL string
+	weatherURL string
+	countryURL string
+	safetyURL  string
 }
 
 // NewPipeline creates a Pipeline. If client is nil a default with 10s timeout is used.
@@ -32,11 +36,15 @@ func NewPipeline(repo Repository, client *http.Client, interval, debounce time.D
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Pipeline{
-		repo:     repo,
-		client:   client,
-		ch:       make(chan FeedResult, 100),
-		interval: interval,
-		debounce: debounce,
+		repo:       repo,
+		client:     client,
+		ch:         make(chan FeedResult, 100),
+		interval:   interval,
+		debounce:   debounce,
+		geocodeURL: geocodeBaseURL,
+		weatherURL: openMeteoBaseURL,
+		countryURL: restCountriesBaseURL,
+		safetyURL:  advisoryBaseURL,
 	}
 }
 
@@ -87,7 +95,7 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 		geo = v.(*GeocodingResult)
 	} else {
 		var err error
-		geo, err = fetchGeocode(ctx, p.client, geocodeBaseURL, city)
+		geo, err = fetchGeocode(ctx, p.client, p.geocodeURL, city)
 		if err != nil {
 			log.Printf("pipeline: geocode %s: %v", city, err)
 			return
@@ -96,7 +104,7 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	}
 
 	// Weather (send immediately)
-	wr := fetchWeather(ctx, p.client, openMeteoBaseURL, city, geo.Latitude, geo.Longitude)
+	wr := fetchWeather(ctx, p.client, p.weatherURL, city, geo.Latitude, geo.Longitude)
 	p.ch <- wr
 
 	// Country and safety in parallel
@@ -104,13 +112,13 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		cr := fetchCountry(ctx, p.client, restCountriesBaseURL, geo.CountryCode)
+		cr := fetchCountry(ctx, p.client, p.countryURL, geo.CountryCode)
 		cr.City = city
 		p.ch <- cr
 	}()
 	go func() {
 		defer wg.Done()
-		sr := fetchSafety(ctx, p.client, advisoryBaseURL, city, geo.CountryCode)
+		sr := fetchSafety(ctx, p.client, p.safetyURL, city, geo.CountryCode)
 		p.ch <- sr
 	}()
 	wg.Wait()

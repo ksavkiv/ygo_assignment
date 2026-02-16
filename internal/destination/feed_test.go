@@ -515,3 +515,465 @@ func TestPipelineListener_SkipsErrors(t *testing.T) {
 		t.Errorf("expected 1 metadata key, got %d", len(meta))
 	}
 }
+
+// ---------- StubFetcher ----------
+
+func TestStubFetcher(t *testing.T) {
+	f := NewStubFetcher()
+	d, err := f.Fetch(context.Background(), "Paris")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.City != "paris" {
+		t.Errorf("got city %q, want %q (lowercase)", d.City, "paris")
+	}
+	if d.Country != "unknown" {
+		t.Errorf("got country %q, want %q", d.Country, "unknown")
+	}
+	if d.Metadata == nil {
+		t.Fatal("expected metadata to be set, got nil")
+	}
+
+	var meta map[string]string
+	if err := json.Unmarshal(d.Metadata, &meta); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+	if meta["source"] != "stub" {
+		t.Errorf("got source %q, want %q", meta["source"], "stub")
+	}
+}
+
+// ---------- NewDefaultAPIFetcher ----------
+
+func TestNewDefaultAPIFetcher(t *testing.T) {
+	f := NewDefaultAPIFetcher()
+	if f == nil {
+		t.Fatal("expected non-nil APIFetcher")
+	}
+	if f.geocodeURL != geocodeBaseURL {
+		t.Errorf("got geocodeURL %q, want %q", f.geocodeURL, geocodeBaseURL)
+	}
+	if f.weatherURL != openMeteoBaseURL {
+		t.Errorf("got weatherURL %q, want %q", f.weatherURL, openMeteoBaseURL)
+	}
+	if f.countryURL != restCountriesBaseURL {
+		t.Errorf("got countryURL %q, want %q", f.countryURL, restCountriesBaseURL)
+	}
+	if f.safetyURL != advisoryBaseURL {
+		t.Errorf("got safetyURL %q, want %q", f.safetyURL, advisoryBaseURL)
+	}
+}
+
+// ---------- pollCity / pollAll ----------
+
+// testEndpoints creates httptest servers for all 4 external APIs and returns
+// their URLs plus a cleanup function.
+type testServers struct {
+	geocode *httptest.Server
+	weather *httptest.Server
+	country *httptest.Server
+	safety  *httptest.Server
+}
+
+func newTestServers() *testServers {
+	geoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"results":[{"name":"Paris","latitude":48.8566,"longitude":2.3522,"country":"France","country_code":"FR"}]}`))
+	}))
+
+	weatherSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"current_weather":{"temperature":22.5,"windspeed":10.3,"weathercode":1},
+			"daily":{"temperature_2m_max":[25.0],"temperature_2m_min":[15.0]}
+		}`))
+	}))
+
+	countrySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{
+			"name":{"official":"French Republic"},
+			"capital":["Paris"],
+			"region":"Europe",
+			"population":67390000,
+			"languages":{"fra":"French"},
+			"currencies":{"EUR":{"name":"Euro","symbol":"€"}},
+			"flags":{"png":"https://flagcdn.com/w320/fr.png"}
+		}]`))
+	}))
+
+	safetySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"data":{
+				"FR":{
+					"iso_alpha2":"FR",
+					"name":"France",
+					"advisory":{"score":2.8,"sources_active":7,"message":"Safe","updated":"2024-06-15"}
+				}
+			}
+		}`))
+	}))
+
+	return &testServers{
+		geocode: geoSrv,
+		weather: weatherSrv,
+		country: countrySrv,
+		safety:  safetySrv,
+	}
+}
+
+func (s *testServers) close() {
+	s.geocode.Close()
+	s.weather.Close()
+	s.country.Close()
+	s.safety.Close()
+}
+
+func TestPollCity(t *testing.T) {
+	servers := newTestServers()
+	defer servers.close()
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error { return nil },
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	p.geocodeURL = servers.geocode.URL
+	p.weatherURL = servers.weather.URL
+	p.countryURL = servers.country.URL
+	p.safetyURL = servers.safety.URL
+
+	ctx := context.Background()
+	p.pollCity(ctx, "paris")
+
+	// pollCity sends 3 results: weather, country, safety
+	results := make([]FeedResult, 0, 3)
+	for i := 0; i < 3; i++ {
+		select {
+		case fr := <-p.ch:
+			results = append(results, fr)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for result %d", i+1)
+		}
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	sources := map[string]bool{}
+	for _, fr := range results {
+		if fr.Err != nil {
+			t.Errorf("unexpected error for source %q: %v", fr.Source, fr.Err)
+		}
+		sources[fr.Source] = true
+	}
+
+	for _, want := range []string{"weather", "country", "safety"} {
+		if !sources[want] {
+			t.Errorf("expected result with source %q, not found", want)
+		}
+	}
+
+	// Verify geocode was cached
+	if _, ok := p.geoCache.Load("paris"); !ok {
+		t.Error("expected geocode result to be cached")
+	}
+}
+
+func TestPollCity_GeocodeError(t *testing.T) {
+	// Geocode server returns 500, so pollCity should return early with no results
+	geoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer geoSrv.Close()
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error { return nil },
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	p.geocodeURL = geoSrv.URL
+
+	ctx := context.Background()
+	p.pollCity(ctx, "badcity")
+
+	// Channel should be empty since geocode failed
+	select {
+	case fr := <-p.ch:
+		t.Fatalf("expected no results on channel, got %+v", fr)
+	default:
+		// expected: nothing on channel
+	}
+}
+
+func TestPollCity_UsesGeoCache(t *testing.T) {
+	// No geocode server needed since we pre-populate the cache
+	servers := newTestServers()
+	defer servers.close()
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error { return nil },
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	p.weatherURL = servers.weather.URL
+	p.countryURL = servers.country.URL
+	p.safetyURL = servers.safety.URL
+
+	// Pre-populate cache
+	p.geoCache.Store("paris", &GeocodingResult{
+		Name:        "Paris",
+		Latitude:    48.8566,
+		Longitude:   2.3522,
+		Country:     "France",
+		CountryCode: "FR",
+	})
+
+	ctx := context.Background()
+	p.pollCity(ctx, "paris")
+
+	// Should still get 3 results from the cached geo data
+	results := make([]FeedResult, 0, 3)
+	for i := 0; i < 3; i++ {
+		select {
+		case fr := <-p.ch:
+			results = append(results, fr)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for result %d", i+1)
+		}
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+}
+
+func TestPollAll(t *testing.T) {
+	servers := newTestServers()
+	defer servers.close()
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error { return nil },
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	p.geocodeURL = servers.geocode.URL
+	p.weatherURL = servers.weather.URL
+	p.countryURL = servers.country.URL
+	p.safetyURL = servers.safety.URL
+
+	ctx := context.Background()
+	p.pollAll(ctx, []string{"paris", "paris"})
+
+	// 2 cities * 3 results each = 6 results
+	// (both resolve to same geocode response but that is fine)
+	results := make([]FeedResult, 0, 6)
+	for i := 0; i < 6; i++ {
+		select {
+		case fr := <-p.ch:
+			results = append(results, fr)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for result %d (got %d so far)", i+1, len(results))
+		}
+	}
+
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(results))
+	}
+}
+
+// ---------- Start ----------
+
+func TestStart_CancelsCleanly(t *testing.T) {
+	servers := newTestServers()
+	defer servers.close()
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error { return nil },
+	}
+
+	p := NewPipeline(repo, nil, 1*time.Hour, 50*time.Millisecond)
+	p.geocodeURL = servers.geocode.URL
+	p.weatherURL = servers.weather.URL
+	p.countryURL = servers.country.URL
+	p.safetyURL = servers.safety.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.Start(ctx, []string{"paris"})
+		close(done)
+	}()
+
+	// Let the initial poll complete, then cancel
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Start returned cleanly
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after context cancellation")
+	}
+}
+
+// ---------- Additional error branch tests ----------
+
+func TestFetchGeocode_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	_, err := fetchGeocode(context.Background(), ts.Client(), ts.URL, "paris")
+	if err == nil {
+		t.Fatal("expected error for 500 response, got nil")
+	}
+}
+
+func TestFetchGeocode_BadJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{not valid json`))
+	}))
+	defer ts.Close()
+
+	_, err := fetchGeocode(context.Background(), ts.Client(), ts.URL, "paris")
+	if err == nil {
+		t.Fatal("expected error for bad JSON, got nil")
+	}
+}
+
+func TestFetchWeather_BadJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{not valid json`))
+	}))
+	defer ts.Close()
+
+	fr := fetchWeather(context.Background(), ts.Client(), ts.URL, "paris", 48.8566, 2.3522)
+	if fr.Err == nil {
+		t.Fatal("expected error for bad JSON, got nil")
+	}
+	if fr.Source != "weather" {
+		t.Errorf("got source %q, want %q", fr.Source, "weather")
+	}
+}
+
+func TestFetchCountry_EmptyArray(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer ts.Close()
+
+	fr := fetchCountry(context.Background(), ts.Client(), ts.URL, "ZZ")
+	if fr.Err == nil {
+		t.Fatal("expected error for empty array, got nil")
+	}
+	if fr.Source != "country" {
+		t.Errorf("got source %q, want %q", fr.Source, "country")
+	}
+}
+
+func TestFetchCountry_BadJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{not valid json`))
+	}))
+	defer ts.Close()
+
+	fr := fetchCountry(context.Background(), ts.Client(), ts.URL, "FR")
+	if fr.Err == nil {
+		t.Fatal("expected error for bad JSON, got nil")
+	}
+	if fr.Source != "country" {
+		t.Errorf("got source %q, want %q", fr.Source, "country")
+	}
+}
+
+func TestFetchSafety_MissingCountryCode(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Valid JSON but without the requested country code "FR"
+		w.Write([]byte(`{"data":{"DE":{"iso_alpha2":"DE","name":"Germany","advisory":{"score":1.5,"sources_active":5,"message":"Safe","updated":"2024-01-01"}}}}`))
+	}))
+	defer ts.Close()
+
+	fr := fetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	if fr.Err == nil {
+		t.Fatal("expected error for missing country code, got nil")
+	}
+	if fr.Source != "safety" {
+		t.Errorf("got source %q, want %q", fr.Source, "safety")
+	}
+}
+
+func TestFetchSafety_BadJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{not valid json`))
+	}))
+	defer ts.Close()
+
+	fr := fetchSafety(context.Background(), ts.Client(), ts.URL, "paris", "FR")
+	if fr.Err == nil {
+		t.Fatal("expected error for bad JSON, got nil")
+	}
+	if fr.Source != "safety" {
+		t.Errorf("got source %q, want %q", fr.Source, "safety")
+	}
+}
+
+func TestFetchGeocode_ConnectionError(t *testing.T) {
+	// Use a URL that will fail to connect
+	_, err := fetchGeocode(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "paris")
+	if err == nil {
+		t.Fatal("expected error for connection failure, got nil")
+	}
+}
+
+func TestFetchWeather_ConnectionError(t *testing.T) {
+	fr := fetchWeather(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "paris", 48.0, 2.0)
+	if fr.Err == nil {
+		t.Fatal("expected error for connection failure, got nil")
+	}
+}
+
+func TestFetchCountry_ConnectionError(t *testing.T) {
+	fr := fetchCountry(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "FR")
+	if fr.Err == nil {
+		t.Fatal("expected error for connection failure, got nil")
+	}
+}
+
+func TestFetchSafety_ConnectionError(t *testing.T) {
+	fr := fetchSafety(context.Background(), &http.Client{Timeout: 100 * time.Millisecond}, "http://127.0.0.1:1", "paris", "FR")
+	if fr.Err == nil {
+		t.Fatal("expected error for connection failure, got nil")
+	}
+}
+
+func TestFlush_UpsertError(t *testing.T) {
+	upsertCalls := 0
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, _ *Destination) error {
+			upsertCalls++
+			return errors.New("db error")
+		},
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	batch := map[string][]FeedResult{
+		"paris": {
+			{Source: "weather", City: "paris", Data: json.RawMessage(`{"temp":22}`)},
+		},
+	}
+
+	p.flush(context.Background(), batch)
+
+	if upsertCalls != 1 {
+		t.Errorf("expected 1 upsert call, got %d", upsertCalls)
+	}
+}
