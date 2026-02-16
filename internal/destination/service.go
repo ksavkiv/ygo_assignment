@@ -8,6 +8,7 @@ import (
 type Repository interface {
 	GetByCity(ctx context.Context, city string) (*Destination, error)
 	Upsert(ctx context.Context, d *Destination) error
+	ListCities(ctx context.Context) ([]string, error)
 }
 
 type Cache interface {
@@ -58,6 +59,10 @@ func (s *Service) Refresh(ctx context.Context, city string) (*Destination, error
 
 	_ = s.cache.Set(ctx, cacheKey(city), d)
 	return d, nil
+}
+
+func (s *Service) ListCities(ctx context.Context) ([]string, error) {
+	return s.repo.ListCities(ctx)
 }
 
 func cacheKey(city string) string {

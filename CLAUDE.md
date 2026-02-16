@@ -137,6 +137,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 
 | Method | Path                                  | Description                            |
 |--------|---------------------------------------|----------------------------------------|
+| GET    | /api/v1/destinations                  | List all stored cities                 |
 | GET    | /api/v1/destinations/{city}           | Get cached/stored destination data     |
 | POST   | /api/v1/destinations/{city}/refresh   | Fetch fresh data from external sources |
 | GET    | /api/v1/health                        | Health check (DB + Redis connectivity) |

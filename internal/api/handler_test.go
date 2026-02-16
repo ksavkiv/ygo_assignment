@@ -30,6 +30,13 @@ func (s *stubRepo) Upsert(_ context.Context, d *destination.Destination) error {
 	s.data[d.City] = d
 	return nil
 }
+func (s *stubRepo) ListCities(_ context.Context) ([]string, error) {
+	cities := make([]string, 0, len(s.data))
+	for city := range s.data {
+		cities = append(cities, city)
+	}
+	return cities, nil
+}
 
 type stubCache struct{}
 
@@ -158,6 +165,42 @@ func TestRefresh_FetcherError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("got status %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- ListCities tests ---
+
+func TestListCities_Success(t *testing.T) {
+	repo := &stubRepo{data: map[string]*destination.Destination{
+		"paris":  {City: "paris", Country: "france"},
+		"london": {City: "london", Country: "uk"},
+	}}
+	h := newTestHandler(repo, &stubCache{}, &stubFetcher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/destinations", nil)
+	w := httptest.NewRecorder()
+
+	h.ListCities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("got content-type %q, want application/json", ct)
+	}
+}
+
+func TestListCities_Empty(t *testing.T) {
+	repo := &stubRepo{data: map[string]*destination.Destination{}}
+	h := newTestHandler(repo, &stubCache{}, &stubFetcher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/destinations", nil)
+	w := httptest.NewRecorder()
+
+	h.ListCities(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
 	}
 }
 

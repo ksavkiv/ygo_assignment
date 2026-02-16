@@ -23,6 +23,7 @@ func NewRouter(svc *destination.Service, pool *pgxpool.Pool, rdb *redis.Client, 
 	r.Get("/api/v1/health", h.Health)
 
 	r.Route("/api/v1/destinations", func(r chi.Router) {
+		r.Get("/", h.ListCities)
 		r.Get("/{city}", h.GetByCity)
 		r.Post("/{city}/refresh", h.Refresh)
 	})

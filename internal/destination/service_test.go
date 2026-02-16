@@ -10,8 +10,9 @@ import (
 // --- mocks ---
 
 type mockRepo struct {
-	getByCityFn func(ctx context.Context, city string) (*Destination, error)
-	upsertFn    func(ctx context.Context, d *Destination) error
+	getByCityFn  func(ctx context.Context, city string) (*Destination, error)
+	upsertFn     func(ctx context.Context, d *Destination) error
+	listCitiesFn func(ctx context.Context) ([]string, error)
 }
 
 func (m *mockRepo) GetByCity(ctx context.Context, city string) (*Destination, error) {
@@ -19,6 +20,12 @@ func (m *mockRepo) GetByCity(ctx context.Context, city string) (*Destination, er
 }
 func (m *mockRepo) Upsert(ctx context.Context, d *Destination) error {
 	return m.upsertFn(ctx, d)
+}
+func (m *mockRepo) ListCities(ctx context.Context) ([]string, error) {
+	if m.listCitiesFn != nil {
+		return m.listCitiesFn(ctx)
+	}
+	return nil, nil
 }
 
 type mockCache struct {

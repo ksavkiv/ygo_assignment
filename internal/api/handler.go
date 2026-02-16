@@ -19,6 +19,23 @@ type Handler struct {
 	rdb  *redis.Client
 }
 
+func (h *Handler) ListCities(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("endpoint called", "method", r.Method, "path", r.URL.Path)
+
+	cities, err := h.svc.ListCities(r.Context())
+	if err != nil {
+		slog.Error("list cities failed", "error", err)
+		http.Error(w, "failed to list cities", http.StatusInternalServerError)
+		return
+	}
+	if cities == nil {
+		cities = []string{}
+	}
+
+	slog.Debug("response", "method", r.Method, "path", r.URL.Path, "count", len(cities), "status", http.StatusOK)
+	writeJSON(w, http.StatusOK, cities)
+}
+
 func (h *Handler) GetByCity(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("endpoint called", "method", r.Method, "path", r.URL.Path)
 

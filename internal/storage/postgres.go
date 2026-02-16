@@ -36,6 +36,25 @@ func (r *PostgresRepo) GetByCity(ctx context.Context, city string) (*destination
 }
 
 
+func (r *PostgresRepo) ListCities(ctx context.Context) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `SELECT city FROM destinations ORDER BY city`)
+	if err != nil {
+		slog.Error("postgres: failed to list cities", "error", err)
+		return nil, fmt.Errorf("list cities: %w", err)
+	}
+	defer rows.Close()
+
+	var cities []string
+	for rows.Next() {
+		var city string
+		if err := rows.Scan(&city); err != nil {
+			return nil, fmt.Errorf("scan city: %w", err)
+		}
+		cities = append(cities, city)
+	}
+	return cities, rows.Err()
+}
+
 func (r *PostgresRepo) Upsert(ctx context.Context, d *destination.Destination) error {
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO destinations (city, country, latitude, longitude, metadata)

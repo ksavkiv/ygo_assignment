@@ -548,3 +548,56 @@
 > Appended entries 35–39 to `ai-logs/conversation.md` covering: auto-pull cities from DB, removing fallback, fetching cities from REST Countries API, rate limit fix with sequential polling, and this logging request.
 
 ---
+
+## Entry 40
+
+**User Prompt:**
+> update curl example to brussels city
+
+**Assistant Response:**
+> Updated all curl example commands in `README.md` to use `brussels` instead of `paris` for both the GET destination and POST refresh endpoints.
+
+---
+
+## Entry 41
+
+**User Prompt:**
+> commit and push
+
+**Assistant Response:**
+> Committed all changes as `b8719f5` and pushed to `origin/main`.
+
+---
+
+## Entry 42
+
+**User Prompt:**
+> implement endpoint to return list of cities
+
+**Assistant Response:**
+> Followed TDD to add `GET /api/v1/destinations` endpoint:
+>
+> - Re-added `ListCities(ctx) ([]string, error)` to the `Repository` interface in `service.go`
+> - Implemented `ListCities` in `PostgresRepo` (`SELECT city FROM destinations ORDER BY city`)
+> - Added `Service.ListCities` method delegating to the repo
+> - Created `Handler.ListCities` in `handler.go` — returns JSON array of city strings, empty array `[]` when no cities stored
+> - Added `r.Get("/", h.ListCities)` route in `router.go` under `/api/v1/destinations`
+> - Added `TestListCities_Success` and `TestListCities_Empty` tests in `handler_test.go`
+> - Updated all mock repos across test files with `ListCities` method
+>
+> All tests pass.
+
+---
+
+## Entry 43
+
+**User Prompt:**
+> update readme with curl example for new endpoint
+
+**Assistant Response:**
+> Updated `README.md`:
+> - Added `GET /api/v1/destinations — List all stored cities` to the API endpoints table
+> - Added curl example for listing all stored cities
+> - Also updated `CLAUDE.md` API endpoints table to include the new endpoint
+
+---

@@ -36,6 +36,7 @@ Requests without a valid token receive `401 Unauthorized`.
 
 | Method | Path                                  | Description                                        |
 |--------|---------------------------------------|----------------------------------------------------|
+| GET    | /api/v1/destinations                  | List all stored cities                             |
 | GET    | /api/v1/destinations/{city}           | Get cached/stored destination data                 |
 | POST   | /api/v1/destinations/{city}/refresh   | Fetch fresh data from external sources, store/cache |
 | GET    | /api/v1/health                        | Health check (DB + Redis connectivity)             |
@@ -48,6 +49,10 @@ export TOKEN="super-secret-token-2025"
 
 # Health check
 curl -s http://localhost:8080/api/v1/health \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# List all stored cities
+curl -s http://localhost:8080/api/v1/destinations \
   -H "Authorization: Bearer $TOKEN" | jq
 
 # Get destination data for a city

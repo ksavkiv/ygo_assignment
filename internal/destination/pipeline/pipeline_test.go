@@ -17,8 +17,9 @@ import (
 // --- mocks ---
 
 type mockRepo struct {
-	getByCityFn func(ctx context.Context, city string) (*destination.Destination, error)
-	upsertFn    func(ctx context.Context, d *destination.Destination) error
+	getByCityFn  func(ctx context.Context, city string) (*destination.Destination, error)
+	upsertFn     func(ctx context.Context, d *destination.Destination) error
+	listCitiesFn func(ctx context.Context) ([]string, error)
 }
 
 func (m *mockRepo) GetByCity(ctx context.Context, city string) (*destination.Destination, error) {
@@ -26,6 +27,12 @@ func (m *mockRepo) GetByCity(ctx context.Context, city string) (*destination.Des
 }
 func (m *mockRepo) Upsert(ctx context.Context, d *destination.Destination) error {
 	return m.upsertFn(ctx, d)
+}
+func (m *mockRepo) ListCities(ctx context.Context) ([]string, error) {
+	if m.listCitiesFn != nil {
+		return m.listCitiesFn(ctx)
+	}
+	return nil, nil
 }
 
 // --- tests ---
