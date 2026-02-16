@@ -35,9 +35,10 @@ func main() {
 
 	repo := storage.NewPostgresRepo(pool)
 	redisCache := cache.NewRedisCache(rdb)
-	svc := destination.NewService(repo, redisCache)
+	fetcher := destination.NewStubFetcher()
+	svc := destination.NewService(repo, redisCache, fetcher)
 
-	router := api.NewRouter(svc)
+	router := api.NewRouter(svc, pool, rdb)
 
 	srv := &http.Server{
 		Addr:         cfg.ServerAddr,
