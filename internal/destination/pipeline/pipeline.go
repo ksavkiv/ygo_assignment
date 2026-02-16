@@ -12,6 +12,17 @@ import (
 	"destination-data-aggregation-api/internal/destination/feed"
 )
 
+// TopCities is the list of the 30 most popular travel destination cities
+// that the pipeline preloads on startup.
+var TopCities = []string{
+	"paris", "london", "new york", "tokyo", "dubai",
+	"bangkok", "istanbul", "singapore", "rome", "barcelona",
+	"amsterdam", "prague", "berlin", "sydney", "hong kong",
+	"madrid", "vienna", "los angeles", "milan", "seoul",
+	"lisbon", "dublin", "athens", "kuala lumpur", "munich",
+	"brussels", "budapest", "zurich", "copenhagen", "edinburgh",
+}
+
 // Pipeline orchestrates periodic polling of external APIs and batched upserts.
 type Pipeline struct {
 	repo       destination.Repository
@@ -55,10 +66,8 @@ func (p *Pipeline) Start(ctx context.Context) {
 		close(listenerDone)
 	}()
 
-	cities := p.loadCities(ctx)
-	if len(cities) > 0 {
-		p.pollAll(ctx, cities)
-	}
+	cities := p.loadCities()
+	p.pollAll(ctx, cities)
 
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -66,12 +75,7 @@ func (p *Pipeline) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			if len(cities) == 0 {
-				cities = p.loadCities(ctx)
-			}
-			if len(cities) > 0 {
-				p.pollAll(ctx, cities)
-			}
+			p.pollAll(ctx, cities)
 		case <-ctx.Done():
 			<-listenerDone
 			return
@@ -79,14 +83,9 @@ func (p *Pipeline) Start(ctx context.Context) {
 	}
 }
 
-// loadCities fetches capital cities from the REST Countries API.
-func (p *Pipeline) loadCities(ctx context.Context) []string {
-	cities, err := feed.FetchCities(ctx, p.client, p.countryURL)
-	if err != nil {
-		log.Printf("pipeline: fetch cities: %v", err)
-		return nil
-	}
-	return cities
+// loadCities returns the preloaded list of top cities.
+func (p *Pipeline) loadCities() []string {
+	return TopCities
 }
 
 // pollAll polls cities sequentially with a delay between each to respect API rate limits.

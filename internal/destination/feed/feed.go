@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -109,7 +110,7 @@ type restCountryItem struct {
 
 // FetchGeocode resolves a city name to coordinates using the Open-Meteo geocoding API.
 func FetchGeocode(ctx context.Context, client *http.Client, baseURL, city string) (*GeocodingResult, error) {
-	url := fmt.Sprintf("%s/v1/search?name=%s&count=1", baseURL, city)
+	url := fmt.Sprintf("%s/v1/search?name=%s&count=1", baseURL, url.QueryEscape(city))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -457,7 +457,7 @@ func TestStart_CancelsCleanly(t *testing.T) {
 	}
 }
 
-func TestStart_PullsCitiesFromAPI(t *testing.T) {
+func TestStart_UsesTopCities(t *testing.T) {
 	servers := newTestServers()
 	defer servers.close()
 
@@ -487,15 +487,22 @@ func TestStart_PullsCitiesFromAPI(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(300 * time.Millisecond)
+	// Wait for all 30 cities to be polled, then cancel
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	<-done
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !upserted["paris"] {
-		t.Error("expected pipeline to poll 'paris' from REST Countries API capitals")
+	// Verify pipeline polls from the hardcoded TopCities list
+	if len(upserted) != len(TopCities) {
+		t.Errorf("expected %d cities polled, got %d", len(TopCities), len(upserted))
+	}
+	for _, city := range TopCities {
+		if !upserted[city] {
+			t.Errorf("expected city %q to be polled", city)
+		}
 	}
 }
 
