@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/time/rate"
 )
 
 func NewRouter(svc *destination.Service, pool *pgxpool.Pool, rdb *redis.Client, apiToken string) *chi.Mux {
@@ -14,6 +15,7 @@ func NewRouter(svc *destination.Service, pool *pgxpool.Pool, rdb *redis.Client, 
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(RateLimiter(rate.Limit(100.0/60.0), 100))
 	r.Use(BearerAuth(apiToken))
 
 	h := &Handler{svc: svc, pool: pool, rdb: rdb}
