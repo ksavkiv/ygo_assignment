@@ -397,6 +397,69 @@ func TestPipelineListener_MultipleCities(t *testing.T) {
 	}
 }
 
+// ---------- APIFetcher ----------
+
+func TestAPIFetcher_Fetch(t *testing.T) {
+	geoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(geocodingResponse{
+			Results: []GeocodingResult{
+				{Name: "Paris", Latitude: 48.85, Longitude: 2.35, Country: "France", CountryCode: "FR"},
+			},
+		})
+	}))
+	defer geoSrv.Close()
+
+	weatherSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(openMeteoResponse{
+			CurrentWeather: struct {
+				Temperature float64 `json:"temperature"`
+				Windspeed   float64 `json:"windspeed"`
+				WeatherCode int     `json:"weathercode"`
+			}{Temperature: 15.3, Windspeed: 12.1, WeatherCode: 3},
+			Daily: struct {
+				TempMax []float64 `json:"temperature_2m_max"`
+				TempMin []float64 `json:"temperature_2m_min"`
+			}{TempMax: []float64{16.2}, TempMin: []float64{8.1}},
+		})
+	}))
+	defer weatherSrv.Close()
+
+	countrySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"name":{"common":"France","official":"French Republic"},"capital":["Paris"],"region":"Europe","population":67390000,"languages":{"fra":"French"},"currencies":{"EUR":{"name":"Euro","symbol":"€"}},"flags":{"png":"https://flagcdn.com/w320/fr.png"}}]`))
+	}))
+	defer countrySrv.Close()
+
+	safetySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{"FR":{"iso_alpha2":"FR","name":"France","advisory":{"score":2.1,"sources_active":7,"message":"","updated":"2026-02-15"}}}}`))
+	}))
+	defer safetySrv.Close()
+
+	f := NewAPIFetcher(geoSrv.URL, weatherSrv.URL, countrySrv.URL, safetySrv.URL)
+	d, err := f.Fetch(context.Background(), "paris")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.City != "paris" {
+		t.Errorf("got city %q, want paris", d.City)
+	}
+	if d.Country != "France" {
+		t.Errorf("got country %q, want France", d.Country)
+	}
+	if d.Latitude != 48.85 {
+		t.Errorf("got lat %f, want 48.85", d.Latitude)
+	}
+
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(d.Metadata, &meta); err != nil {
+		t.Fatalf("failed to parse metadata: %v", err)
+	}
+	for _, key := range []string{"weather", "country", "safety"} {
+		if _, ok := meta[key]; !ok {
+			t.Errorf("expected metadata to contain %q", key)
+		}
+	}
+}
+
 func TestPipelineListener_SkipsErrors(t *testing.T) {
 	var mu sync.Mutex
 	upserted := map[string]*Destination{}
