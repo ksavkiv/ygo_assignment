@@ -1,4 +1,4 @@
-package destination
+package feed
 
 import (
 	"context"
@@ -9,13 +9,20 @@ import (
 	"time"
 )
 
+const (
+	GeocodeBaseURL       = "https://geocoding-api.open-meteo.com"
+	OpenMeteoBaseURL     = "https://api.open-meteo.com"
+	RestCountriesBaseURL = "https://restcountries.com"
+	AdvisoryBaseURL      = "https://www.travel-advisory.info/api"
+)
+
 // FeedResult is the common intermediate type produced by all API fetchers.
 type FeedResult struct {
-	Source    string          // "weather", "country", "safety"
-	City      string
-	Data      json.RawMessage
+	Source    string // "weather", "country", "safety"
+	City     string
+	Data     json.RawMessage
 	FetchedAt time.Time
-	Err       error
+	Err      error
 }
 
 // GeocodingResult holds coordinates resolved from a city name via Open-Meteo geocoding.
@@ -107,8 +114,8 @@ type restCountryItem struct {
 
 // ---------- fetcher functions ----------
 
-// fetchGeocode resolves a city name to coordinates using the Open-Meteo geocoding API.
-func fetchGeocode(ctx context.Context, client *http.Client, baseURL, city string) (*GeocodingResult, error) {
+// FetchGeocode resolves a city name to coordinates using the Open-Meteo geocoding API.
+func FetchGeocode(ctx context.Context, client *http.Client, baseURL, city string) (*GeocodingResult, error) {
 	url := fmt.Sprintf("%s/v1/search?name=%s&count=1", baseURL, city)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -138,8 +145,8 @@ func fetchGeocode(ctx context.Context, client *http.Client, baseURL, city string
 	return &gr.Results[0], nil
 }
 
-// fetchWeather retrieves the current weather and 7-day forecast from Open-Meteo.
-func fetchWeather(ctx context.Context, client *http.Client, baseURL, city string, lat, lon float64) FeedResult {
+// FetchWeather retrieves the current weather and 7-day forecast from Open-Meteo.
+func FetchWeather(ctx context.Context, client *http.Client, baseURL, city string, lat, lon float64) FeedResult {
 	fr := FeedResult{Source: "weather", City: city}
 
 	url := fmt.Sprintf(
@@ -190,8 +197,8 @@ func fetchWeather(ctx context.Context, client *http.Client, baseURL, city string
 	return fr
 }
 
-// fetchCountry retrieves country information from REST Countries by alpha code.
-func fetchCountry(ctx context.Context, client *http.Client, baseURL, countryCode string) FeedResult {
+// FetchCountry retrieves country information from REST Countries by alpha code.
+func FetchCountry(ctx context.Context, client *http.Client, baseURL, countryCode string) FeedResult {
 	fr := FeedResult{Source: "country"}
 
 	url := fmt.Sprintf("%s/v3.1/alpha/%s", baseURL, strings.ToUpper(countryCode))
@@ -249,8 +256,8 @@ func fetchCountry(ctx context.Context, client *http.Client, baseURL, countryCode
 	return fr
 }
 
-// fetchSafety retrieves travel advisory data from travel-advisory.info.
-func fetchSafety(ctx context.Context, client *http.Client, baseURL, city, countryCode string) FeedResult {
+// FetchSafety retrieves travel advisory data from travel-advisory.info.
+func FetchSafety(ctx context.Context, client *http.Client, baseURL, city, countryCode string) FeedResult {
 	fr := FeedResult{Source: "safety", City: city}
 
 	url := fmt.Sprintf("%s?countrycode=%s", baseURL, strings.ToUpper(countryCode))

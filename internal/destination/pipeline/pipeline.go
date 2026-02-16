@@ -1,4 +1,4 @@
-package destination
+package pipeline
 
 import (
 	"context"
@@ -7,23 +7,19 @@ import (
 	"net/http"
 	"sync"
 	"time"
-)
 
-const (
-	geocodeBaseURL       = "https://geocoding-api.open-meteo.com"
-	openMeteoBaseURL     = "https://api.open-meteo.com"
-	restCountriesBaseURL = "https://restcountries.com"
-	advisoryBaseURL      = "https://www.travel-advisory.info/api"
+	"destination-data-aggregation-api/internal/destination"
+	"destination-data-aggregation-api/internal/destination/feed"
 )
 
 // Pipeline orchestrates periodic polling of external APIs and batched upserts.
 type Pipeline struct {
-	repo       Repository
+	repo       destination.Repository
 	client     *http.Client
-	ch         chan FeedResult
+	ch         chan feed.FeedResult
 	interval   time.Duration
 	debounce   time.Duration
-	geoCache   sync.Map // city -> *GeocodingResult
+	geoCache   sync.Map // city -> *feed.GeocodingResult
 	geocodeURL string
 	weatherURL string
 	countryURL string
@@ -31,20 +27,20 @@ type Pipeline struct {
 }
 
 // NewPipeline creates a Pipeline. If client is nil a default with 10s timeout is used.
-func NewPipeline(repo Repository, client *http.Client, interval, debounce time.Duration) *Pipeline {
+func NewPipeline(repo destination.Repository, client *http.Client, interval, debounce time.Duration) *Pipeline {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Pipeline{
 		repo:       repo,
 		client:     client,
-		ch:         make(chan FeedResult, 100),
+		ch:         make(chan feed.FeedResult, 100),
 		interval:   interval,
 		debounce:   debounce,
-		geocodeURL: geocodeBaseURL,
-		weatherURL: openMeteoBaseURL,
-		countryURL: restCountriesBaseURL,
-		safetyURL:  advisoryBaseURL,
+		geocodeURL: feed.GeocodeBaseURL,
+		weatherURL: feed.OpenMeteoBaseURL,
+		countryURL: feed.RestCountriesBaseURL,
+		safetyURL:  feed.AdvisoryBaseURL,
 	}
 }
 
@@ -90,12 +86,12 @@ func (p *Pipeline) pollAll(ctx context.Context, cities []string) {
 // pollCity fetches geocoding (cached), weather, country, and safety data for a city.
 func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	// Resolve geocoding (cached)
-	var geo *GeocodingResult
+	var geo *feed.GeocodingResult
 	if v, ok := p.geoCache.Load(city); ok {
-		geo = v.(*GeocodingResult)
+		geo = v.(*feed.GeocodingResult)
 	} else {
 		var err error
-		geo, err = fetchGeocode(ctx, p.client, p.geocodeURL, city)
+		geo, err = feed.FetchGeocode(ctx, p.client, p.geocodeURL, city)
 		if err != nil {
 			log.Printf("pipeline: geocode %s: %v", city, err)
 			return
@@ -104,7 +100,7 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	}
 
 	// Weather (send immediately)
-	wr := fetchWeather(ctx, p.client, p.weatherURL, city, geo.Latitude, geo.Longitude)
+	wr := feed.FetchWeather(ctx, p.client, p.weatherURL, city, geo.Latitude, geo.Longitude)
 	p.ch <- wr
 
 	// Country and safety in parallel
@@ -112,13 +108,13 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		cr := fetchCountry(ctx, p.client, p.countryURL, geo.CountryCode)
+		cr := feed.FetchCountry(ctx, p.client, p.countryURL, geo.CountryCode)
 		cr.City = city
 		p.ch <- cr
 	}()
 	go func() {
 		defer wg.Done()
-		sr := fetchSafety(ctx, p.client, p.safetyURL, city, geo.CountryCode)
+		sr := feed.FetchSafety(ctx, p.client, p.safetyURL, city, geo.CountryCode)
 		p.ch <- sr
 	}()
 	wg.Wait()
@@ -126,7 +122,7 @@ func (p *Pipeline) pollCity(ctx context.Context, city string) {
 
 // listen collects FeedResults and flushes them in batches after a debounce period.
 func (p *Pipeline) listen(ctx context.Context) {
-	batch := make(map[string][]FeedResult)
+	batch := make(map[string][]feed.FeedResult)
 	timer := time.NewTimer(p.debounce)
 	timer.Stop() // start stopped — we only fire after receiving data
 
@@ -149,7 +145,7 @@ func (p *Pipeline) listen(ctx context.Context) {
 
 		case <-timer.C:
 			p.flush(ctx, batch)
-			batch = make(map[string][]FeedResult)
+			batch = make(map[string][]feed.FeedResult)
 
 		case <-ctx.Done():
 			// Drain any remaining items from channel
@@ -173,7 +169,7 @@ func (p *Pipeline) listen(ctx context.Context) {
 }
 
 // flush merges all FeedResults per city and upserts each destination.
-func (p *Pipeline) flush(ctx context.Context, batch map[string][]FeedResult) {
+func (p *Pipeline) flush(ctx context.Context, batch map[string][]feed.FeedResult) {
 	for city, results := range batch {
 		merged := make(map[string]json.RawMessage, len(results))
 		for _, fr := range results {
@@ -186,14 +182,14 @@ func (p *Pipeline) flush(ctx context.Context, batch map[string][]FeedResult) {
 			continue
 		}
 
-		d := &Destination{
+		d := &destination.Destination{
 			City:     city,
 			Metadata: metadata,
 		}
 
 		// Enrich with geo data if available
 		if v, ok := p.geoCache.Load(city); ok {
-			geo := v.(*GeocodingResult)
+			geo := v.(*feed.GeocodingResult)
 			d.Latitude = geo.Latitude
 			d.Longitude = geo.Longitude
 			d.Country = geo.Country

@@ -1,4 +1,4 @@
-package destination
+package feed
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"destination-data-aggregation-api/internal/destination"
 )
 
 // StubFetcher is a placeholder that returns static data.
@@ -18,8 +20,8 @@ func NewStubFetcher() *StubFetcher {
 	return &StubFetcher{}
 }
 
-func (f *StubFetcher) Fetch(_ context.Context, city string) (*Destination, error) {
-	return &Destination{
+func (f *StubFetcher) Fetch(_ context.Context, city string) (*destination.Destination, error) {
+	return &destination.Destination{
 		City:     strings.ToLower(city),
 		Country:  "unknown",
 		Metadata: json.RawMessage(`{"source":"stub"}`),
@@ -46,13 +48,13 @@ func NewAPIFetcher(geocodeURL, weatherURL, countryURL, safetyURL string) *APIFet
 }
 
 func NewDefaultAPIFetcher() *APIFetcher {
-	return NewAPIFetcher(geocodeBaseURL, openMeteoBaseURL, restCountriesBaseURL, advisoryBaseURL)
+	return NewAPIFetcher(GeocodeBaseURL, OpenMeteoBaseURL, RestCountriesBaseURL, AdvisoryBaseURL)
 }
 
-func (f *APIFetcher) Fetch(ctx context.Context, city string) (*Destination, error) {
+func (f *APIFetcher) Fetch(ctx context.Context, city string) (*destination.Destination, error) {
 	city = strings.ToLower(city)
 
-	geo, err := fetchGeocode(ctx, f.client, f.geocodeURL, city)
+	geo, err := FetchGeocode(ctx, f.client, f.geocodeURL, city)
 	if err != nil {
 		return nil, fmt.Errorf("geocode %s: %w", city, err)
 	}
@@ -61,9 +63,9 @@ func (f *APIFetcher) Fetch(ctx context.Context, city string) (*Destination, erro
 	var wg sync.WaitGroup
 
 	wg.Add(3)
-	go func() { defer wg.Done(); ch <- fetchWeather(ctx, f.client, f.weatherURL, city, geo.Latitude, geo.Longitude) }()
-	go func() { defer wg.Done(); r := fetchCountry(ctx, f.client, f.countryURL, geo.CountryCode); r.City = city; ch <- r }()
-	go func() { defer wg.Done(); ch <- fetchSafety(ctx, f.client, f.safetyURL, city, geo.CountryCode) }()
+	go func() { defer wg.Done(); ch <- FetchWeather(ctx, f.client, f.weatherURL, city, geo.Latitude, geo.Longitude) }()
+	go func() { defer wg.Done(); r := FetchCountry(ctx, f.client, f.countryURL, geo.CountryCode); r.City = city; ch <- r }()
+	go func() { defer wg.Done(); ch <- FetchSafety(ctx, f.client, f.safetyURL, city, geo.CountryCode) }()
 
 	wg.Wait()
 	close(ch)
@@ -81,7 +83,7 @@ func (f *APIFetcher) Fetch(ctx context.Context, city string) (*Destination, erro
 		return nil, err
 	}
 
-	return &Destination{
+	return &destination.Destination{
 		City:      city,
 		Country:   geo.Country,
 		Latitude:  geo.Latitude,

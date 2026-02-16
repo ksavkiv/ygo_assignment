@@ -17,8 +17,11 @@ docker compose up -d
 psql "postgres://postgres:postgres@localhost:5432/destinations?sslmode=disable" -f migrations/000001_create_destinations.up.sql
 psql "postgres://postgres:postgres@localhost:5432/destinations?sslmode=disable" -f migrations/000002_add_metadata_jsonb.up.sql
 
-# Run the server
-go run ./cmd/server
+# Build the server binary
+go build -o server ./cmd/server
+
+# Run it
+./server
 ```
 
 The API starts on `:8080` by default.
@@ -80,26 +83,31 @@ go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o 
 
 ## Test Coverage
 
-| Package              | Coverage |
-|----------------------|----------|
-| internal/config      | 100.0%   |
-| internal/api         | 83.8%    |
-| internal/destination | 64.0%    |
+| Package                      | Coverage |
+|------------------------------|----------|
+| internal/config              | 100.0%   |
+| internal/destination         | 100.0%   |
+| internal/destination/pipeline| 92.9%    |
+| internal/destination/feed    | 88.4%    |
+| internal/api                 | 85.9%    |
 
 Key function coverage:
 
-| Function         | Coverage |
-|------------------|----------|
-| BearerAuth       | 100.0%   |
-| GetByCity (handler) | 100.0% |
-| Refresh (handler)   | 100.0% |
-| Health              | 92.3%  |
-| Config.Load         | 100.0% |
-| Service.GetByCity   | 100.0% |
-| Service.Refresh     | 100.0% |
-| APIFetcher.Fetch    | 89.7%  |
-| Pipeline.listen     | 87.0%  |
-| Pipeline.flush      | 81.2%  |
+| Function              | Coverage |
+|-----------------------|----------|
+| BearerAuth            | 100.0%   |
+| GetByCity (handler)   | 100.0%   |
+| Refresh (handler)     | 100.0%   |
+| Health                | 92.3%    |
+| Config.Load           | 100.0%   |
+| Service.GetByCity     | 100.0%   |
+| Service.Refresh       | 100.0%   |
+| APIFetcher.Fetch      | 89.7%    |
+| FetchGeocode          | 93.8%    |
+| Pipeline.Start        | 91.7%    |
+| Pipeline.pollCity     | 100.0%   |
+| Pipeline.listen       | 87.0%    |
+| Pipeline.flush        | 87.5%    |
 
 ## Configuration
 
@@ -119,7 +127,9 @@ Copy `.env.example` to `.env` and adjust values for local development.
 ├── cmd/server/              # Application entrypoint
 ├── internal/
 │   ├── api/                 # HTTP handlers & routing
-│   ├── destination/         # Core business logic, models & fetcher
+│   ├── destination/         # Domain model, interfaces & service
+│   │   ├── feed/            # External API clients & fetcher implementations
+│   │   └── pipeline/        # Background polling & batched upserts
 │   ├── storage/             # PostgreSQL repository
 │   ├── cache/               # Redis caching layer
 │   └── config/              # Environment-based configuration

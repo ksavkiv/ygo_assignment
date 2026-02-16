@@ -15,6 +15,8 @@ import (
 	"destination-data-aggregation-api/internal/cache"
 	"destination-data-aggregation-api/internal/config"
 	"destination-data-aggregation-api/internal/destination"
+	"destination-data-aggregation-api/internal/destination/feed"
+	"destination-data-aggregation-api/internal/destination/pipeline"
 	"destination-data-aggregation-api/internal/storage"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -51,7 +53,7 @@ func main() {
 
 	repo := storage.NewPostgresRepo(pool)
 	redisCache := cache.NewRedisCache(rdb)
-	fetcher := destination.NewDefaultAPIFetcher()
+	fetcher := feed.NewDefaultAPIFetcher()
 	svc := destination.NewService(repo, redisCache, fetcher)
 
 	router := api.NewRouter(svc, pool, rdb, cfg.APIToken)
@@ -72,8 +74,8 @@ func main() {
 
 	// Start data feed pipeline in background
 	seedCities := []string{"paris", "london", "tokyo"}
-	pipeline := destination.NewPipeline(repo, nil, 5*time.Minute, 5*time.Second)
-	go pipeline.Start(ctx, seedCities)
+	pl := pipeline.NewPipeline(repo, nil, 5*time.Minute, 5*time.Second)
+	go pl.Start(ctx, seedCities)
 
 	<-ctx.Done()
 	log.Println("shutting down...")
