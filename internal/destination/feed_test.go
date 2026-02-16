@@ -3,9 +3,12 @@ package destination
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 )
 
 // ---------- fetchGeocode ----------
@@ -275,5 +278,177 @@ func TestFetchSafety_HTTPError(t *testing.T) {
 	}
 	if fr.Source != "safety" {
 		t.Errorf("got source %q, want %q", fr.Source, "safety")
+	}
+}
+
+// ---------- Pipeline tests ----------
+
+func TestPipelineListener_BatchesAndFlushes(t *testing.T) {
+	var mu sync.Mutex
+	upserted := map[string]*Destination{}
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, d *Destination) error {
+			mu.Lock()
+			defer mu.Unlock()
+			upserted[d.City] = d
+			return nil
+		},
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.listen(ctx)
+		close(done)
+	}()
+
+	// Send 3 FeedResults for "paris": weather, country, safety
+	p.ch <- FeedResult{Source: "weather", City: "paris", Data: json.RawMessage(`{"temp":22}`)}
+	p.ch <- FeedResult{Source: "country", City: "paris", Data: json.RawMessage(`{"name":"France"}`)}
+	p.ch <- FeedResult{Source: "safety", City: "paris", Data: json.RawMessage(`{"score":2.8}`)}
+
+	// Store a geocoding result so flush can enrich the destination
+	p.geoCache.Store("paris", &GeocodingResult{
+		Name:      "Paris",
+		Latitude:  48.8566,
+		Longitude: 2.3522,
+		Country:   "France",
+	})
+
+	// Wait for debounce to fire
+	time.Sleep(300 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	d, ok := upserted["paris"]
+	if !ok {
+		t.Fatal("expected upsert to be called for paris")
+	}
+
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(d.Metadata, &meta); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+
+	if _, ok := meta["weather"]; !ok {
+		t.Error("expected metadata to contain 'weather' key")
+	}
+	if _, ok := meta["country"]; !ok {
+		t.Error("expected metadata to contain 'country' key")
+	}
+	if _, ok := meta["safety"]; !ok {
+		t.Error("expected metadata to contain 'safety' key")
+	}
+	if len(meta) != 3 {
+		t.Errorf("expected 3 metadata keys, got %d", len(meta))
+	}
+}
+
+func TestPipelineListener_MultipleCities(t *testing.T) {
+	var mu sync.Mutex
+	upserted := map[string]*Destination{}
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, d *Destination) error {
+			mu.Lock()
+			defer mu.Unlock()
+			upserted[d.City] = d
+			return nil
+		},
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.listen(ctx)
+		close(done)
+	}()
+
+	// Store geocoding results
+	p.geoCache.Store("paris", &GeocodingResult{Name: "Paris", Latitude: 48.8566, Longitude: 2.3522, Country: "France"})
+	p.geoCache.Store("london", &GeocodingResult{Name: "London", Latitude: 51.5074, Longitude: -0.1278, Country: "United Kingdom"})
+
+	p.ch <- FeedResult{Source: "weather", City: "paris", Data: json.RawMessage(`{"temp":22}`)}
+	p.ch <- FeedResult{Source: "weather", City: "london", Data: json.RawMessage(`{"temp":15}`)}
+
+	time.Sleep(300 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if _, ok := upserted["paris"]; !ok {
+		t.Error("expected upsert for paris")
+	}
+	if _, ok := upserted["london"]; !ok {
+		t.Error("expected upsert for london")
+	}
+	if len(upserted) != 2 {
+		t.Errorf("expected 2 upserts, got %d", len(upserted))
+	}
+}
+
+func TestPipelineListener_SkipsErrors(t *testing.T) {
+	var mu sync.Mutex
+	upserted := map[string]*Destination{}
+
+	repo := &mockRepo{
+		upsertFn: func(_ context.Context, d *Destination) error {
+			mu.Lock()
+			defer mu.Unlock()
+			upserted[d.City] = d
+			return nil
+		},
+	}
+
+	p := NewPipeline(repo, nil, 5*time.Minute, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.listen(ctx)
+		close(done)
+	}()
+
+	p.geoCache.Store("paris", &GeocodingResult{Name: "Paris", Latitude: 48.8566, Longitude: 2.3522, Country: "France"})
+
+	// Send a good weather result and an errored safety result
+	p.ch <- FeedResult{Source: "weather", City: "paris", Data: json.RawMessage(`{"temp":22}`)}
+	p.ch <- FeedResult{Source: "safety", City: "paris", Err: errors.New("api down")}
+
+	time.Sleep(300 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	d, ok := upserted["paris"]
+	if !ok {
+		t.Fatal("expected upsert for paris")
+	}
+
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(d.Metadata, &meta); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+
+	if _, ok := meta["weather"]; !ok {
+		t.Error("expected metadata to contain 'weather' key")
+	}
+	if _, ok := meta["safety"]; ok {
+		t.Error("expected metadata NOT to contain 'safety' key (errored result should be skipped)")
+	}
+	if len(meta) != 1 {
+		t.Errorf("expected 1 metadata key, got %d", len(meta))
 	}
 }
