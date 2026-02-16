@@ -9,11 +9,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func NewRouter(svc *destination.Service, pool *pgxpool.Pool, rdb *redis.Client) *chi.Mux {
+func NewRouter(svc *destination.Service, pool *pgxpool.Pool, rdb *redis.Client, apiToken string) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(BearerAuth(apiToken))
 
 	h := &Handler{svc: svc, pool: pool, rdb: rdb}
 

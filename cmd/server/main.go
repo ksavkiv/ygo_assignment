@@ -38,7 +38,7 @@ func main() {
 	fetcher := destination.NewStubFetcher()
 	svc := destination.NewService(repo, redisCache, fetcher)
 
-	router := api.NewRouter(svc, pool, rdb)
+	router := api.NewRouter(svc, pool, rdb, cfg.APIToken)
 
 	srv := &http.Server{
 		Addr:         cfg.ServerAddr,

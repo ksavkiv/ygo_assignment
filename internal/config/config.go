@@ -1,18 +1,26 @@
 package config
 
-import "os"
+import (
+	"os"
+
+	"github.com/joho/godotenv"
+)
 
 type Config struct {
 	ServerAddr  string
 	DatabaseURL string
 	RedisAddr   string
+	APIToken    string
 }
 
 func Load() Config {
+	_ = godotenv.Load()
+
 	return Config{
 		ServerAddr:  getEnv("SERVER_ADDR", ":8080"),
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/destinations?sslmode=disable"),
 		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
+		APIToken:    getEnv("API_TOKEN", ""),
 	}
 }
 

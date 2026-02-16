@@ -9,6 +9,7 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("SERVER_ADDR")
 	os.Unsetenv("DATABASE_URL")
 	os.Unsetenv("REDIS_ADDR")
+	os.Unsetenv("API_TOKEN")
 
 	cfg := Load()
 
@@ -17,6 +18,9 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.RedisAddr != "localhost:6379" {
 		t.Errorf("got RedisAddr %q, want localhost:6379", cfg.RedisAddr)
+	}
+	if cfg.APIToken != "" {
+		t.Errorf("got APIToken %q, want empty string", cfg.APIToken)
 	}
 }
 
@@ -33,5 +37,16 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	}
 	if cfg.RedisAddr != "redis:6380" {
 		t.Errorf("got RedisAddr %q, want redis:6380", cfg.RedisAddr)
+	}
+}
+
+func TestLoad_APITokenFromEnv(t *testing.T) {
+	os.Setenv("API_TOKEN", "my-secret-token")
+	defer os.Unsetenv("API_TOKEN")
+
+	cfg := Load()
+
+	if cfg.APIToken != "my-secret-token" {
+		t.Errorf("got APIToken %q, want %q", cfg.APIToken, "my-secret-token")
 	}
 }
